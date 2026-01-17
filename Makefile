@@ -1,3 +1,6 @@
+COMP = c++
+FLAGS = -Wall -Wextra -Werror -std=c++98
+
 NAME = ircserv
 
 SRCS = main.cpp \
@@ -5,13 +8,10 @@ SRCS = main.cpp \
 
 OBJS = $(SRCS:.cpp=.o)
 
-COMP = c++
-FLAGS = -Wall -Wextra -Werror -std=c++98
-
 all: $(NAME)
 
 $(NAME): $(OBJS)
-	$(COMP) $(FLAGS) $(OBJS) -o $(NAME)
+	$(COMP) $(FLAGS) $(OBJS) -o $(NAME) && rm -f $(OBJS)
 
 %.o: %.cpp
 	$(COMP) $(FLAGS) -o $@ -c $<
