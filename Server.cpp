@@ -85,8 +85,10 @@ void Server::acceptNewClients() {
         clientsPollFd.revents = 0;
 
         this->_pollFDs.push_back(clientsPollFd);
+        std::cout << "server added new pollFd PollFDs.size = " << _pollFDs.size() << "\n";
     }
 }
+
 
 void Server::disconnectClient(int pollFDInd) {
     int fd = _pollFDs[pollFDInd].fd;
@@ -95,8 +97,11 @@ void Server::disconnectClient(int pollFDInd) {
     _pollFDs.erase(_pollFDs.begin() + pollFDInd);
 }
 
-    // Extract complete lines and process them
+
+// is similar to fileprivate in Swift
+// anonymous namespace for helper functions only dont call class func inside
 namespace {
+    // Extract complete lines and process them
     bool getNewLine(std::string& buf, std::string& line) {
         size_t pos = buf.find("\r\n");
         if (pos == std::string::npos)
@@ -106,6 +111,77 @@ namespace {
         return true;
     }
 }
+
+Server::ParsedMessage Server::parseLine(const std::string& line) {
+    Server::ParsedMessage msg;
+    std::string temp;
+    std::string trailing;
+    size_t pos;
+
+    temp = line;
+    trailing = "";
+
+    if (temp.empty())
+        return msg;
+
+    // 1) Optional prefix
+    if (temp[0] == ':') {
+        pos = temp.find(' ');
+        if (pos == std::string::npos)
+            return msg; // malformed
+        msg.prefix = temp.substr(1, pos - 1);
+        temp.erase(0, pos + 1);
+    }
+
+    // trim leading spaces
+    while (!temp.empty() && temp[0] == ' ')
+        temp.erase(0, 1);
+
+    if (temp.empty())
+        return msg;
+
+    // 2) Optional trailing param (everything after " :")
+    pos = temp.find(" :");
+    if (pos != std::string::npos) {
+        trailing = temp.substr(pos + 2);
+        temp.erase(pos);
+    }
+
+    // 3) Split remaining by spaces: command + middle params
+
+    // read command
+    pos = temp.find(' ');
+    if (pos == std::string::npos) {
+        msg.command = temp;
+    } else {
+        msg.command = temp.substr(0, pos);
+        temp.erase(0, pos + 1);
+
+        // middle params
+        while (true) {
+            while (!temp.empty() && temp[0] == ' ')
+                temp.erase(0, 1);
+            if (temp.empty())
+                break;
+
+            pos = temp.find(' ');
+            if (pos == std::string::npos) {
+                msg.params.push_back(temp);
+                break;
+            }
+            msg.params.push_back(temp.substr(0, pos));
+            temp.erase(0, pos + 1);
+        }
+    }
+
+    // 4) Add trailing as last param if present
+    if (!trailing.empty())
+        msg.params.push_back(trailing);
+
+    return msg;
+}
+
+
 
 void Server::handleClientRead(int indOfPoll) {
     ssize_t readSize;
@@ -124,11 +200,12 @@ void Server::handleClientRead(int indOfPoll) {
             // Once "\r\n" appears, the buffer may exceed 512 because it can contain
             // multiple valid IRC lines.
     // TODO: limit size of unfinished IRC line (tail after last "\r\n"), not just presence of delimiter
-            if (clientMessage.find("\r\n") == std::string::npos && clientMessage.size() > 512) {
+    // clientMessage == [hello world\r\n\ infinitygamno.......] - no r\n\ at the end and
+    // clientMessage.size() > 512 limits
+            if (clientMessage.find("\r\n") == std::string::npos && clientMessage.size() > 510) {
                 disconnectClient(indOfPoll);
                 return;
             }
-
             continue;
         }
 
@@ -149,24 +226,15 @@ void Server::handleClientRead(int indOfPoll) {
         return;
     }
 
+    // std::cout << clientMessage <<  "\n";
     // parse complete irc lines after we've drained the socket (EAGAIN)
     std::string ircLine = "";
     while (getNewLine(clientMessage, ircLine) == true) {
         // TODO:
-        // parse(ircLine);
+        ParsedMessage parsedObj = parseLine(ircLine);
+        std::cout << "parsedObj.command: " << parsedObj.command << "\n";
     }
 }
-
-
-// is similar to fileprivate in Swift
-// anonymous namespace for helper functions only dont call class func inside
-// namespace {
-
-//     bool isValid() {
-//         return false;
-//     }
-// }
-
 
 //has to be called only once
 void Server::run() {

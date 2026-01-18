@@ -17,31 +17,41 @@
 #include <map>
 
 class Server {
-public:
-    Server(int port, const std::string& password);
-    ~Server();
+    private:
+        struct ParsedMessage {
+            std::string prefix;
+            std::string command;
+            std::vector<std::string> params;
+        };
 
-    void run();
+    ParsedMessage parseLine(const std::string& line);
+    private:
+        int _port;
+        int _listenFd;
+        std::string _password;
+        std::vector<pollfd> _pollFDs; //poll list (listen fd + client fds)
 
-private:
-    Server(const Server&);
-    Server& operator=(const Server&); 
+        // _inbuf is an dict where key<fd where we take message> <string message>;
+        std::map<int, std::string> _inbuf;
 
-    void setupListeningSocket();
-    void setNonBlocking(int fd);
-    void acceptNewClients();
+    public:
+        Server(int port, const std::string& password);
+        ~Server();
 
-    void handleClientRead(int pollFdInd);
-    void disconnectClient(int pollFDInd);
+        //Public functionality
+        void run();
 
-private:
-    int _port;
-    std::string _password;
-    int _listenFd;
-    std::vector<pollfd> _pollFDs; //poll list (listen fd + client fds)
+    private:
+        Server(const Server&);
+        Server& operator=(const Server&); 
 
-    // _inbuf is an dict where key<fd where we take message> <sting message>;
-    std::map<int, std::string> _inbuf;
+        //Private functionality
+        void setupListeningSocket();
+        void setNonBlocking(int fd);
+        void acceptNewClients();
+
+        void handleClientRead(int pollFdInd);
+        void disconnectClient(int pollFDInd);
 };
 
 #endif
