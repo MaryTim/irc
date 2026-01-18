@@ -16,15 +16,9 @@
 #include <vector>
 #include <map>
 
-class Server {
-    private:
-        struct ParsedMessage {
-            std::string prefix;
-            std::string command;
-            std::vector<std::string> params;
-        };
+#include "IRCParser.hpp"
 
-    ParsedMessage parseLine(const std::string& line);
+class Server {
     private:
         int _port;
         int _listenFd;

@@ -5,6 +5,8 @@ FLAGS = -std=c++98
 NAME = ircserv
 
 SRCS = main.cpp \
+		ServerRead.cpp \
+		IRCParser.cpp \
 		Server.cpp
 
 OBJS = $(SRCS:.cpp=.o)

@@ -75,9 +75,6 @@ void Server::acceptNewClients() {
         setNonBlocking(clientFd);
         std::cout << "connected fd=" << clientFd << "\n";
 
-        // For now we are not storing clients yet.
-        // Next step - to add clientFd to poll list and track per-client buffers.
-
         //add client fd to poll list
         pollfd clientsPollFd;
         clientsPollFd.fd = clientFd;
@@ -97,146 +94,8 @@ void Server::disconnectClient(int pollFDInd) {
     _pollFDs.erase(_pollFDs.begin() + pollFDInd);
 }
 
-
-// is similar to fileprivate in Swift
-// anonymous namespace for helper functions only dont call class func inside
-namespace {
-    // Extract complete lines and process them
-    bool getNewLine(std::string& buf, std::string& line) {
-        size_t pos = buf.find("\r\n");
-        if (pos == std::string::npos)
-            return false;
-        line = buf.substr(0, pos);
-        buf.erase(0, pos + 2);
-        return true;
-    }
-}
-
-Server::ParsedMessage Server::parseLine(const std::string& line) {
-    Server::ParsedMessage msg;
-    std::string temp;
-    std::string trailing;
-    size_t pos;
-
-    temp = line;
-    trailing = "";
-
-    if (temp.empty())
-        return msg;
-
-    // 1) Optional prefix
-    if (temp[0] == ':') {
-        pos = temp.find(' ');
-        if (pos == std::string::npos)
-            return msg; // malformed
-        msg.prefix = temp.substr(1, pos - 1);
-        temp.erase(0, pos + 1);
-    }
-
-    // trim leading spaces
-    while (!temp.empty() && temp[0] == ' ')
-        temp.erase(0, 1);
-
-    if (temp.empty())
-        return msg;
-
-    // 2) Optional trailing param (everything after " :")
-    pos = temp.find(" :");
-    if (pos != std::string::npos) {
-        trailing = temp.substr(pos + 2);
-        temp.erase(pos);
-    }
-
-    // 3) Split remaining by spaces: command + middle params
-
-    // read command
-    pos = temp.find(' ');
-    if (pos == std::string::npos) {
-        msg.command = temp;
-    } else {
-        msg.command = temp.substr(0, pos);
-        temp.erase(0, pos + 1);
-
-        // middle params
-        while (true) {
-            while (!temp.empty() && temp[0] == ' ')
-                temp.erase(0, 1);
-            if (temp.empty())
-                break;
-
-            pos = temp.find(' ');
-            if (pos == std::string::npos) {
-                msg.params.push_back(temp);
-                break;
-            }
-            msg.params.push_back(temp.substr(0, pos));
-            temp.erase(0, pos + 1);
-        }
-    }
-
-    // 4) Add trailing as last param if present
-    if (!trailing.empty())
-        msg.params.push_back(trailing);
-
-    return msg;
-}
-
-
-
-void Server::handleClientRead(int indOfPoll) {
-    ssize_t readSize;
-    std::vector<char> buf(512);
-    int fd = _pollFDs[indOfPoll].fd;
-    std::string &clientMessage = _inbuf[fd];
-
-    while (true) {
-        readSize = recv(fd, &buf[0], buf.size(), 0);
-        if (readSize > 0) {
-            clientMessage.append(&buf[0], readSize);
-
-            // IRC protocol limits a single command line to 510 bytes INCLUDING "\r\n".
-            // If the client keeps sending data without a line terminator, we must
-            // protect the server from unbounded memory growth (DoS / protocol violation).
-            // Once "\r\n" appears, the buffer may exceed 512 because it can contain
-            // multiple valid IRC lines.
-    // TODO: limit size of unfinished IRC line (tail after last "\r\n"), not just presence of delimiter
-    // clientMessage == [hello world\r\n\ infinitygamno.......] - no r\n\ at the end and
-    // clientMessage.size() > 512 limits
-            if (clientMessage.find("\r\n") == std::string::npos && clientMessage.size() > 510) {
-                disconnectClient(indOfPoll);
-                return;
-            }
-            continue;
-        }
-
-        if (readSize == 0) {
-            std::cout << "Client disconnected fd=" << fd << "\n";
-            disconnectClient(indOfPoll);
-            return;
-        }
-
-        // There is nothing to read, continue polling
-        // Normal exec
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            break;
-        }
-
-        std::cerr << "recv() failed: " << std::strerror(errno) << "\n";
-        disconnectClient(indOfPoll);
-        return;
-    }
-
-    // std::cout << clientMessage <<  "\n";
-    // parse complete irc lines after we've drained the socket (EAGAIN)
-    std::string ircLine = "";
-    while (getNewLine(clientMessage, ircLine) == true) {
-        // TODO:
-        ParsedMessage parsedObj = parseLine(ircLine);
-        std::cout << "parsedObj.command: " << parsedObj.command << "\n";
-    }
-}
-
-//has to be called only once
+// Main runloop func
+// has to be called only once
 void Server::run() {
     pollfd listeningPollFd;
     listeningPollFd.fd = _listenFd;
