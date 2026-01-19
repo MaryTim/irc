@@ -1,18 +1,35 @@
 #include "Server.hpp"
 
-Server::Server(int port, const std::string& password): _port(port), _password(password), _listenFd(-1) {
+Server::Server(int port, const std::string& password)
+    :_port(port), 
+    _listenFd(-1),
+    _password(password), 
+    _serverName("ircserv") {
     setupListeningSocket();
 }
 
 Server::~Server() {
+    for (size_t i = 1; i < _pollFDs.size(); i++) {
+        if (_pollFDs[i].fd >= 0)
+            close(_pollFDs[i].fd);
+    }
+    _pollFDs.clear();
+    _clients.clear();
+    _inbuf.clear();
+    _nickToFd.clear();
+
     if (_listenFd != -1)
         close(_listenFd);
 }
 
 void Server::setNonBlocking(int fd) {
-    if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
-        std::cerr << "fcntl(O_NONBLOCK) failed: " << std::strerror(errno) << "\n";
-        // For this skeleton, treat as fatal:
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) {
+        std::cerr << "fcntl(F_GETFL) failed: " << std::strerror(errno) << "\n";
+        std::exit(EXIT_FAILURE);
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        std::cerr << "fcntl(F_SETFL, O_NONBLOCK) failed: " << std::strerror(errno) << "\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -60,7 +77,7 @@ void Server::setupListeningSocket() {
 void Server::acceptNewClients() {
     while (true) {
         sockaddr_in clientAddr;
-        socklen_t   clientLen = sizeof(clientAddr);
+        socklen_t clientLen = sizeof(clientAddr);
 
         int clientFd = accept(_listenFd, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
         if (clientFd < 0) {
@@ -82,20 +99,48 @@ void Server::acceptNewClients() {
         clientsPollFd.revents = 0;
 
         this->_pollFDs.push_back(clientsPollFd);
+        // Ensure client state exists immediately
+        Client& c = _clients[clientFd];
+        c.fd = clientFd;
+        // Ensure input buffer entry exists too
+        _inbuf[clientFd] = "";
         std::cout << "server added new pollFd PollFDs.size = " << _pollFDs.size() << "\n";
     }
 }
 
 
 void Server::disconnectClient(int pollFDInd) {
+    if (pollFDInd == 0)
+        return;
     int fd = _pollFDs[pollFDInd].fd;
-    close(fd);
+    for (std::map<std::string, Channel>::iterator itc = _channels.begin(); itc != _channels.end(); ) {
+        itc->second.members.erase(fd);
+
+        if (itc->second.members.empty()) {
+            std::map<std::string, Channel>::iterator dead = itc;
+            ++itc;
+            _channels.erase(dead);
+        } else {
+            ++itc;
+        }
+    }
+    // Clean nick mapping if any
+    std::map<int, Client>::iterator it = _clients.find(fd);
+    if (it != _clients.end()) {
+        if (it->second.hasNick) {
+            std::map<std::string, int>::iterator nit = _nickToFd.find(it->second.nick);
+            if (nit != _nickToFd.end() && nit->second == fd)
+                _nickToFd.erase(nit);
+        }
+        _clients.erase(it);
+    }
+
     _inbuf.erase(fd);
+    if (fd >= 0)
+        close(fd);
     _pollFDs.erase(_pollFDs.begin() + pollFDInd);
 }
 
-// Main runloop func
-// has to be called only once
 void Server::run() {
     pollfd listeningPollFd;
     listeningPollFd.fd = _listenFd;
@@ -123,7 +168,6 @@ void Server::run() {
 
         size_t i = 1;
         while (i < _pollFDs.size() && ret > 0) {
-
             //skip current pollFD if no events in it
             short currentPollFDEvents = _pollFDs[i].revents;
             if (currentPollFDEvents == 0) {
@@ -136,15 +180,15 @@ void Server::run() {
             // POLLHUP (client disconnected) ==  client closed TCP connection
     	    // POLLERR (socket error)        ==  broken socket/connection reset
             // POLLNVAL (invalid fd)         ==  fd was already closed
-            if (_pollFDs[i].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+            if (currentPollFDEvents & (POLLHUP | POLLERR | POLLNVAL)) {
                 disconnectClient(i);
                 continue;
             }
-            if (_pollFDs[i].revents & POLLIN) {
+            if (currentPollFDEvents & POLLIN) {
                 handleClientRead(i);
                 continue;
             }
-            if (_pollFDs[i].revents & POLLOUT) {
+            if (currentPollFDEvents & POLLOUT) {
                 //TODO:
                 // send();
             }

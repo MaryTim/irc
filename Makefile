@@ -7,7 +7,8 @@ NAME = ircserv
 SRCS = main.cpp \
 		ServerRead.cpp \
 		IRCParser.cpp \
-		Server.cpp
+		Server.cpp \
+		ServerIRC.cpp
 
 OBJS = $(SRCS:.cpp=.o)
 

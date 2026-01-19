@@ -5,68 +5,95 @@
 
 #include "Server.hpp"
 
-// is similar to fileprivate in Swift
-// anonymous namespace for helper functions only dont call class func inside
+
 namespace {
-    // Extract complete lines and process them
-    bool getNewLine(std::string& buf, std::string& line) {
-        size_t pos = buf.find("\r\n");
+    // Extract one complete IRC line (without "\r\n") from buf.
+    // Returns true if a line was extracted into `line`.
+    bool extractLineCRLF(std::string& buf, std::string& line) {
+        const std::string delim = "\r\n";
+        size_t pos = buf.find(delim);
         if (pos == std::string::npos)
             return false;
-        line = buf.substr(0, pos);
-        buf.erase(0, pos + 2);
+
+        line.assign(buf, 0, pos);
+        buf.erase(0, pos + delim.size());
         return true;
+    }
+
+    // IRC limit applies to ONE command line (excluding "\r\n").
+    // We enforce it on the *unfinished tail* (after the last CRLF).
+    size_t unfinishedLineLen(const std::string& buf) {
+        const std::string delim = "\r\n";
+        size_t pos = buf.rfind(delim);
+        if (pos == std::string::npos)
+            return buf.size(); // no complete line yet -> whole buffer is unfinished line
+        return buf.size() - (pos + delim.size());
     }
 }
 
+// // is similar to fileprivate in Swift
+// // anonymous namespace for helper functions only dont call class func inside
+// namespace {
+//     // Extract complete lines and process them
+//     bool getNewLine(std::string& buf, std::string& line) {
+//         size_t pos = buf.find("\r\n");
+//         if (pos == std::string::npos)
+//             return false;
+//         line = buf.substr(0, pos);
+//         buf.erase(0, pos + 2);
+//         return true;
+//     }
+// }
+
 void Server::handleClientRead(int indOfPoll) {
-    ssize_t readSize;
-    std::vector<char> buf(512);
-    int fd = _pollFDs[indOfPoll].fd;
-    std::string &clientMessage = _inbuf[fd];
+    const int fd = _pollFDs[indOfPoll].fd;
+    std::string& clientBuf = _inbuf[fd];
 
+    // Read until EAGAIN/EWOULDBLOCK (non-blocking socket)
+    char tmp[512];
     while (true) {
-        readSize = recv(fd, &buf[0], buf.size(), 0);
-        if (readSize > 0) {
-            clientMessage.append(&buf[0], readSize);
+        ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
 
-            // IRC protocol limits a single command line to 510 bytes INCLUDING "\r\n".
-            // If the client keeps sending data without a line terminator, we must
-            // protect the server from unbounded memory growth (DoS / protocol violation).
-            // Once "\r\n" appears, the buffer may exceed 512 because it can contain
-            // multiple valid IRC lines.
-    // TODO: limit size of unfinished IRC line (tail after last "\r\n"), not just presence of delimiter
-    // clientMessage == [hello world\r\n\ infinitygamno.......] - no r\n\ at the end and
-    // clientMessage.size() > 512 limits
-            if (clientMessage.find("\r\n") == std::string::npos && clientMessage.size() > 510) {
+        if (n > 0) {
+            clientBuf.append(tmp, n);
+
+            // Protect against a client sending an overlong line without "\r\n"
+            // (or a tail that grows beyond the IRC limit).
+            if (unfinishedLineLen(clientBuf) > 510) {
+                std::cout << "Protocol violation: overlong line fd=" << fd << "\n";
                 disconnectClient(indOfPoll);
                 return;
             }
             continue;
         }
 
-        if (readSize == 0) {
+        if (n == 0) {
             std::cout << "Client disconnected fd=" << fd << "\n";
             disconnectClient(indOfPoll);
             return;
         }
 
-        // There is nothing to read, continue polling
-        // Normal exec
+        // n < 0
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // Socket drained for now, parse whatever full lines we have.
             break;
         }
 
-        std::cerr << "recv() failed: " << std::strerror(errno) << "\n";
+        std::cerr << "recv() failed fd=" << fd << ": " << std::strerror(errno) << "\n";
         disconnectClient(indOfPoll);
         return;
     }
 
-    // std::cout << clientMessage <<  "\n";
-    // parse complete irc lines after we've drained the socket (EAGAIN)
-    std::string ircLine = "";
-    while (getNewLine(clientMessage, ircLine) == true) {
-        ParsedMessage parsedObj = parseLine(ircLine);
-        std::cout << "parsedObj.command: " << parsedObj.command << "\n";
+    // Parse complete IRC lines after we've drained the socket
+    std::string ircLine;
+    while (extractLineCRLF(clientBuf, ircLine)) {
+        //DELETE THIS line later
+        std::cout << "RAW <- [" << ircLine << "]\n";
+        ParsedMessage parsed = parseLine(ircLine);
+        onMessage(fd, parsed); 
+
+        // TODO:
+        // dispatchCommand(fd, parsed);
+        // (and later, queue replies into an out-buffer + enable POLLOUT)
     }
 }
