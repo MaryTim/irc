@@ -8,7 +8,10 @@ SRCS = main.cpp \
 		ServerRead.cpp \
 		IRCParser.cpp \
 		Server.cpp \
-		ServerIRC.cpp
+		ServerBasicCommands.cpp \
+		ServerChannel.cpp \
+		ServerChannelOperator.cpp \
+		ServerDispatcher.cpp
 
 OBJS = $(SRCS:.cpp=.o)
 

@@ -60,6 +60,12 @@ class Server {
         void handlePRIVMSG(int fd, const ParsedMessage& msg);
         void handleMODE(int fd, const ParsedMessage& msg);
         void handleWHO(int fd, const ParsedMessage& msg);
+
+        //helpers
+        std::string toUpper(std::string s);
+        std::string userPrefix(const Client& c);
+        bool isChannelOperator(const Channel& ch, int fd) const;
+        void broadcastToChannel(const Channel& ch, const std::string& line, int exceptFd);
 };
 
 #endif
