@@ -12,6 +12,7 @@ static std::string toUpper(std::string s) {
 }
 
 // Build a user prefix like ":nick!user@localhost"
+// It’s mandated by the IRC protocol
 static std::string userPrefix(const Client& c) {
     std::string u = c.user.empty() ? "user" : c.user;
     return ":" + c.nick + "!" + u + "@localhost";
@@ -196,7 +197,7 @@ void Server::handleJOIN(int fd, const ParsedMessage& msg) {
 
     std::string chanName = msg.params[0];
 
-    if (chanName.empty() || chanName[0] != '#') {
+    if (chanName.size() < 2 || chanName[0] != '#') {
         sendLine(fd, ":" + _serverName + " 479 " + c.nick + " " + chanName + " :Illegal channel name");
         return;
     }
@@ -205,21 +206,19 @@ void Server::handleJOIN(int fd, const ParsedMessage& msg) {
     ch.name = chanName;
     ch.members.insert(fd);
 
-    // Echo JOIN (without ':' before channel is most compatible)
     std::string joinLine = userPrefix(c) + " JOIN " + chanName;
-    std::cout << "OUT -> [" << joinLine << "]\n";
     sendLine(fd, joinLine);
 
     // Broadcast join to others
-    for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); ++it) {
+    for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); it++) {
         int toFd = *it;
-        if (toFd == fd) continue;
+        if (toFd == fd) continue; //skip joining user to send everyone else but them
         sendLine(toFd, joinLine);
     }
 
     // NAMES list
     std::string names;
-    for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); ++it) {
+    for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); it++) {
         Client& m = _clients[*it];
         if (!names.empty()) names += " ";
         names += m.nick;
@@ -232,13 +231,29 @@ void Server::handleJOIN(int fd, const ParsedMessage& msg) {
 void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
     Client& c = _clients[fd];
 
-    if (msg.params.size() < 2) {
+    if (!c.registered) {
+        sendLine(fd, ":" + _serverName + " 451 * :You have not registered");
+        return;
+    }
+
+    if (msg.params.empty()) {
         sendLine(fd, ":" + _serverName + " 461 " + c.nick + " PRIVMSG :Not enough parameters");
         return;
     }
 
+    // One param -> we have something (often trailing text) but no target
+    if (msg.params.size() == 1) {
+        sendLine(fd, ":" + _serverName + " 411 " + c.nick + " :No recipient given (PRIVMSG)");
+        return;
+    }
+
     std::string target = msg.params[0];
-    std::string text   = msg.params[1];
+    std::string text = msg.params[1];
+
+    if (target.empty()) {
+        sendLine(fd, ":" + _serverName + " 411 " + c.nick + " :No recipient given (PRIVMSG)");
+        return;
+    }
 
     if (text.empty()) {
         sendLine(fd, ":" + _serverName + " 412 " + c.nick + " :No text to send");
@@ -246,13 +261,16 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
     }
 
     // Channel message
-    if (!target.empty() && target[0] == '#') {
+    if (target[0] == '#') {
         std::map<std::string, Channel>::iterator chit = _channels.find(target);
+
+        // a channel with that name doesnt exist
         if (chit == _channels.end()) {
             sendLine(fd, ":" + _serverName + " 403 " + c.nick + " " + target + " :No such channel");
             return;
         }
 
+        // a user isn't a memeber of that channel
         Channel& ch = chit->second;
         if (ch.members.find(fd) == ch.members.end()) {
             sendLine(fd, ":" + _serverName + " 404 " + c.nick + " " + target + " :Cannot send to channel");
@@ -261,7 +279,7 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
 
         std::string line = userPrefix(c) + " PRIVMSG " + target + " :" + text;
 
-        for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); ++it) {
+        for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); it++) {
             int toFd = *it;
             if (toFd == fd) continue; // Halloy shows own message locally
             sendLine(toFd, line);
@@ -272,6 +290,7 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
     // Direct message to nick
     std::map<std::string, int>::iterator it = _nickToFd.find(target);
     if (it == _nickToFd.end()) {
+        // a user with that nick doesnt exist
         sendLine(fd, ":" + _serverName + " 401 " + c.nick + " " + target + " :No such nick");
         return;
     }
@@ -280,22 +299,20 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
     sendLine(toFd, userPrefix(c) + " PRIVMSG " + target + " :" + text);
 }
 
-// -------------------- MODE / WHO (minimal, Halloy-friendly) --------------------
-
+// MODE, WHO
+//!!! operator should implement MODE
+// for normal user this implementation is enough
 void Server::handleMODE(int fd, const ParsedMessage& msg) {
     Client& c = _clients[fd];
 
     if (msg.params.empty())
         return;
-
     std::string target = msg.params[0];
-
     // Channel mode query: reply with "no modes" (+)
     if (!target.empty() && target[0] == '#') {
         sendLine(fd, ":" + _serverName + " 324 " + c.nick + " " + target + " +");
         return;
     }
-
     // User mode query: ignore for now
 }
 
@@ -303,7 +320,7 @@ void Server::handleWHO(int fd, const ParsedMessage& msg) {
     Client& c = _clients[fd];
     std::string mask = msg.params.empty() ? "*" : msg.params[0];
 
-    // If WHO is for a channel, send 352 for each member (minimal but useful for clients)
+    // If WHO is for a channel, send 352 for each member (useful for clients)
     if (!mask.empty() && mask[0] == '#') {
         std::map<std::string, Channel>::iterator chit = _channels.find(mask);
         if (chit != _channels.end()) {
@@ -314,13 +331,10 @@ void Server::handleWHO(int fd, const ParsedMessage& msg) {
                 std::string rn = m.realname.empty() ? m.nick : m.realname;
 
                 // 352 <me> <channel> <user> <host> <server> <nick> <flags> :<hopcount> <realname>
-                sendLine(fd, ":" + _serverName + " 352 " + c.nick + " " + mask + " " +
-                              mu + " localhost " + _serverName + " " + m.nick +
-                              " H :0 " + rn);
+                sendLine(fd, ":" + _serverName + " 352 " + c.nick + " " + mask + " " + mu + " localhost " + _serverName + " " + m.nick + " H :0 " + rn);
             }
         }
     }
-
     // End of WHO
     sendLine(fd, ":" + _serverName + " 315 " + c.nick + " " + mask + " :End of /WHO list.");
 }

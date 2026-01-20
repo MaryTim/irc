@@ -5,29 +5,15 @@
 
 #include "Server.hpp"
 
-
 namespace {
-    // Extract one complete IRC line (without "\r\n") from buf.
-    // Returns true if a line was extracted into `line`.
-    bool extractLineCRLF(std::string& buf, std::string& line) {
-        const std::string delim = "\r\n";
-        size_t pos = buf.find(delim);
-        if (pos == std::string::npos)
-            return false;
-
-        line.assign(buf, 0, pos);
-        buf.erase(0, pos + delim.size());
-        return true;
-    }
-
-    // IRC limit applies to ONE command line (excluding "\r\n").
-    // We enforce it on the *unfinished tail* (after the last CRLF).
+    // IRC limit applies to ONE command line (excluding line ending).
+    // Enforce it on the *unfinished tail* after the last '\n'
+    // (we accept both "\r\n" and "\n" as line terminators).
     size_t unfinishedLineLen(const std::string& buf) {
-        const std::string delim = "\r\n";
-        size_t pos = buf.rfind(delim);
+        size_t pos = buf.rfind('\n');
         if (pos == std::string::npos)
-            return buf.size(); // no complete line yet -> whole buffer is unfinished line
-        return buf.size() - (pos + delim.size());
+            return buf.size();          // no complete line yet -> whole buffer is unfinished
+        return buf.size() - (pos + 1);  // bytes after last '\n'
     }
 }
 
@@ -45,7 +31,7 @@ void Server::handleClientRead(int indOfPoll) {
         if (n > 0) {
             clientBuf.append(tmp, n);
 
-            // Protect against a client sending an overlong line without "\r\n"
+            // Protect against a client sending an overlong line without newline
             if (unfinishedLineLen(clientBuf) > 510) {
                 std::cout << "Protocol violation: overlong line fd=" << fd << "\n";
                 disconnectClient(indOfPoll);
@@ -82,7 +68,7 @@ void Server::handleClientRead(int indOfPoll) {
         std::string line = clientBuf.substr(0, nl);
         clientBuf.erase(0, nl + 1);
 
-        // Strip optional '\r'
+        // Strip optional '\r' (for CRLF)
         if (!line.empty() && line[line.size() - 1] == '\r')
             line.erase(line.size() - 1);
 

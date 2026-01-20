@@ -33,13 +33,10 @@ class Server {
         int _listenFd;
         std::string _password;
         std::string _serverName;
-        // poll list (index 0 = listen fd, index 1..N = clients)
-        std::vector<pollfd> _pollFDs;  
+        std::vector<pollfd> _pollFDs; // poll list (index 0 = listen fd, index 1..N = clients)
         std::map<int, Client> _clients;
-        // _inbuf is an dict where key<fd where we take message> <string message>;
-        std::map<int, std::string> _inbuf;
-        // nick -> fd (for uniqueness checks)
-        std::map<std::string, int> _nickToFd;
+        std::map<int, std::string> _inbuf; // _inbuf is a dict where key<fd where we take message> <string message>;
+        std::map<std::string, int> _nickToFd; // nick -> fd (for uniqueness checks)
         std::map<std::string, Channel> _channels;
 
         void setupListeningSocket();

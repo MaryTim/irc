@@ -29,10 +29,12 @@ ParsedMessage parseLine(const std::string& line) {
         return msg;
 
     // 2) Optional trailing param (everything after " :")
+    bool hasTrailing = false;
     pos = temp.find(" :");
     if (pos != std::string::npos) {
-        trailing = temp.substr(pos + 2);
+        trailing = temp.substr(pos + 2); // may be empty
         temp.erase(pos);
+        hasTrailing = true;
     }
 
     // 3) Split remaining by spaces: command + middle params
@@ -60,7 +62,7 @@ ParsedMessage parseLine(const std::string& line) {
     }
 
     // 4) Add trailing as last param if present
-    if (!trailing.empty())
+    if (hasTrailing)
         msg.params.push_back(trailing);
 
     return msg;
