@@ -146,52 +146,68 @@ void Server::run() {
     listeningPollFd.fd = _listenFd;
     listeningPollFd.events = POLLIN;
     listeningPollFd.revents = 0;
-    this->_pollFDs.push_back(listeningPollFd);
+    _pollFDs.push_back(listeningPollFd);
 
-    // Listening for new connections
     while (true) {
-        //ret == number of fds with events
-        int ret = poll(&_pollFDs[0], _pollFDs.size(), -1); // watch 1 fd
+        int ret = poll(&_pollFDs[0], _pollFDs.size(), -1);
         if (ret < 0) {
             if (errno == EINTR)
-                continue; // interrupted by signal, retry
+                continue;
             std::cerr << "poll() failed: " << std::strerror(errno) << "\n";
             break;
         }
 
         if (_pollFDs[0].revents & POLLIN) {
             acceptNewClients();
-            // clear revents
             _pollFDs[0].revents = 0;
             ret -= 1;
-        } 
+        }
 
         size_t i = 1;
         while (i < _pollFDs.size() && ret > 0) {
-            //skip current pollFD if no events in it
-            short currentPollFDEvents = _pollFDs[i].revents;
-            if (currentPollFDEvents == 0) {
+            short re = _pollFDs[i].revents;
+            if (re == 0) {
                 ++i;
                 continue;
             }
 
+            // Clear revents now (poll() will repopulate next iteration)
+            _pollFDs[i].revents = 0;
             --ret;
 
-            // POLLHUP (client disconnected) ==  client closed TCP connection
-    	    // POLLERR (socket error)        ==  broken socket/connection reset
-            // POLLNVAL (invalid fd)         ==  fd was already closed
-            if (currentPollFDEvents & (POLLHUP | POLLERR | POLLNVAL)) {
-                disconnectClient(i);
-                continue;
-            }
-            if (currentPollFDEvents & POLLIN) {
+            int fd = _pollFDs[i].fd;
+            bool hasHangOrErr = (re & (POLLHUP | POLLERR | POLLNVAL)) != 0;
+
+            // IMPORTANT FIX:
+            // If POLLIN is present, read first even if POLLHUP is also present.
+            if (re & POLLIN) {
                 handleClientRead(i);
+
+                // handleClientRead may have disconnected this client and erased _pollFDs[i]
+                if (hasHangOrErr) {
+                    if (i < _pollFDs.size() && _pollFDs[i].fd == fd) {
+                        disconnectClient(static_cast<int>(i));
+                    }
+                    // if it got erased, current index now points to next element, so don't ++i
+                    continue;
+                }
+
+                // if still here and no hang/error requested, just move on
+                ++i;
                 continue;
             }
-            if (currentPollFDEvents & POLLOUT) {
-                //TODO:
-                // send();
+
+            // No POLLIN, but hangup/error => disconnect
+            if (hasHangOrErr) {
+                disconnectClient(static_cast<int>(i));
+                continue;
             }
+
+            // Optional: POLLOUT handling later
+            if (re & POLLOUT) {
+                // TODO send()
+            }
+
             ++i;
         }
     }

@@ -31,23 +31,11 @@ namespace {
     }
 }
 
-// // is similar to fileprivate in Swift
-// // anonymous namespace for helper functions only dont call class func inside
-// namespace {
-//     // Extract complete lines and process them
-//     bool getNewLine(std::string& buf, std::string& line) {
-//         size_t pos = buf.find("\r\n");
-//         if (pos == std::string::npos)
-//             return false;
-//         line = buf.substr(0, pos);
-//         buf.erase(0, pos + 2);
-//         return true;
-//     }
-// }
-
 void Server::handleClientRead(int indOfPoll) {
     const int fd = _pollFDs[indOfPoll].fd;
     std::string& clientBuf = _inbuf[fd];
+
+    bool peerClosed = false;
 
     // Read until EAGAIN/EWOULDBLOCK (non-blocking socket)
     char tmp[512];
@@ -58,7 +46,6 @@ void Server::handleClientRead(int indOfPoll) {
             clientBuf.append(tmp, n);
 
             // Protect against a client sending an overlong line without "\r\n"
-            // (or a tail that grows beyond the IRC limit).
             if (unfinishedLineLen(clientBuf) > 510) {
                 std::cout << "Protocol violation: overlong line fd=" << fd << "\n";
                 disconnectClient(indOfPoll);
@@ -68,9 +55,10 @@ void Server::handleClientRead(int indOfPoll) {
         }
 
         if (n == 0) {
-            std::cout << "Client disconnected fd=" << fd << "\n";
-            disconnectClient(indOfPoll);
-            return;
+            // Peer closed the connection. We still want to process any complete lines
+            // already received in clientBuf before disconnecting.
+            peerClosed = true;
+            break;
         }
 
         // n < 0
@@ -84,16 +72,35 @@ void Server::handleClientRead(int indOfPoll) {
         return;
     }
 
-    // Parse complete IRC lines after we've drained the socket
-    std::string ircLine;
-    while (extractLineCRLF(clientBuf, ircLine)) {
-        //DELETE THIS line later
-        std::cout << "RAW <- [" << ircLine << "]\n";
-        ParsedMessage parsed = parseLine(ircLine);
-        onMessage(fd, parsed); 
+    // Parse full lines.
+    // Accept both "\r\n" and "\n" (nc variants may send either; -C sends CRLF).
+    while (true) {
+        size_t nl = clientBuf.find('\n');
+        if (nl == std::string::npos)
+            break;
 
-        // TODO:
-        // dispatchCommand(fd, parsed);
-        // (and later, queue replies into an out-buffer + enable POLLOUT)
+        std::string line = clientBuf.substr(0, nl);
+        clientBuf.erase(0, nl + 1);
+
+        // Strip optional '\r'
+        if (!line.empty() && line[line.size() - 1] == '\r')
+            line.erase(line.size() - 1);
+
+        if (line.empty())
+            continue;
+
+        std::cout << "RAW <- [" << line << "]\n";
+
+        ParsedMessage msg = parseLine(line);
+        if (msg.command.empty())
+            continue;
+
+        onMessage(fd, msg);
+    }
+
+    // After processing buffered commands, disconnect if the peer closed.
+    if (peerClosed) {
+        std::cout << "Client disconnected fd=" << fd << "\n";
+        disconnectClient(indOfPoll);
     }
 }
