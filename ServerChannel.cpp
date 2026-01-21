@@ -29,7 +29,7 @@ void Server::handleJOIN(int fd, const ParsedMessage& msg) {
     Channel& ch = _channels[chanName];
     ch.name = chanName;
 
-    // If already in channel, do nothing (idempotent)
+    // If already in channel, do nothing
     if (ch.members.find(fd) != ch.members.end())
         return;
 

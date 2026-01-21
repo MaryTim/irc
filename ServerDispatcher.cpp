@@ -60,6 +60,9 @@ void Server::onMessage(int fd, const ParsedMessage& msg) {
     if (cmd == "USER") {
         handleUSER(fd, msg); return;
     }
+    if (cmd == "QUIT") {
+        handleQUIT(fd, msg); return;
+    }
 
     if ((cmd == "JOIN" || cmd == "PRIVMSG" || cmd == "MODE" || cmd == "WHO") && !_clients[fd].registered) {
         sendLine(fd, ":" + _serverName + " 451 * :You have not registered"); return;

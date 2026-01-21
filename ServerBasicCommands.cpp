@@ -1,6 +1,6 @@
 #include "Server.hpp"
 
-// PING / CAP / NICK / USER / PASS / QUIT(do we need it?)
+// PING / CAP / NICK / USER / PASS / QUIT
 
 void Server::handlePING(int fd, const ParsedMessage& msg) {
     if (!msg.params.empty())
@@ -91,7 +91,11 @@ void Server::handlePASS(int fd, const ParsedMessage& msg) {
     tryRegister(fd);
 }
 
-//TODO: add QUIT (if we need it)
+void Server::handleQUIT(int fd, const ParsedMessage& msg) {
+    int pollInd = findPollIndexByFd(fd);
+    if (pollInd != -1)
+        disconnectClient(pollInd);
+}
 
 void Server::tryRegister(int fd) {
     Client& c = _clients[fd];
@@ -106,6 +110,6 @@ void Server::tryRegister(int fd) {
     sendLine(fd, ":" + _serverName + " 001 " + c.nick + " :Welcome to the IRC server");
     sendLine(fd, ":" + _serverName + " 002 " + c.nick + " :Your host is " + _serverName);
     sendLine(fd, ":" + _serverName + " 003 " + c.nick + " :This server was created today");
-    // include usermodes/channelmodes for compatibility
+    // include user modes/channel modes for compatibility
     sendLine(fd, ":" + _serverName + " 004 " + c.nick + " " + _serverName + " 0.1");
 }

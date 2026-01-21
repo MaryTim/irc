@@ -22,6 +22,14 @@ Server::~Server() {
         close(_listenFd);
 }
 
+int Server::findPollIndexByFd(int fd) const {
+    for (size_t i = 0; i < _pollFDs.size(); i++) {
+        if (_pollFDs[i].fd == fd)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
 void Server::setNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) {
@@ -108,15 +116,55 @@ void Server::acceptNewClients() {
     }
 }
 
-
 void Server::disconnectClient(int pollFDInd) {
     if (pollFDInd == 0)
         return;
-    int fd = _pollFDs[pollFDInd].fd;
-    for (std::map<std::string, Channel>::iterator itc = _channels.begin(); itc != _channels.end(); ) {
-        itc->second.members.erase(fd);
 
-        if (itc->second.members.empty()) {
+    int fd = _pollFDs[pollFDInd].fd;
+
+    // Broadcast QUIT if user is known
+    std::map<int, Client>::iterator it = _clients.find(fd);
+    if (it != _clients.end() && it->second.hasNick) {
+        std::string quitLine = userPrefix(it->second) + " QUIT : Client Quit";
+
+        for (std::map<std::string, Channel>::iterator itc = _channels.begin();
+             itc != _channels.end(); ++itc) {
+
+            Channel& ch = itc->second;
+            if (ch.members.count(fd) == 0)
+                continue;
+
+            for (std::set<int>::iterator mit = ch.members.begin();
+                 mit != ch.members.end(); ++mit) {
+
+                if (*mit != fd)
+                    sendLine(*mit, quitLine);
+            }
+        }
+    }
+
+    // Remove from channels
+    for (std::map<std::string, Channel>::iterator itc = _channels.begin(); itc != _channels.end(); ) {
+        Channel& ch = itc->second;
+
+        ch.members.erase(fd);
+        ch.operators.erase(fd);
+        ch.invited.erase(fd);
+
+        // If channel still has members but no operators, promote one.
+    if (!ch.members.empty() && ch.operators.empty()) {
+        int newOpFd = *ch.members.begin(); // smallest fd
+        ch.operators.insert(newOpFd);
+
+        // Optional (nice for clients): broadcast MODE +o nick
+        Client& newOp = _clients[newOpFd];
+        std::string modeLine = ":" + _serverName + " MODE " + ch.name + " +o " + newOp.nick;
+        for (std::set<int>::iterator mit = ch.members.begin(); mit != ch.members.end(); mit++) {
+            sendLine(*mit, modeLine);
+        }
+    }
+
+        if (ch.members.empty()) {
             std::map<std::string, Channel>::iterator dead = itc;
             ++itc;
             _channels.erase(dead);
@@ -124,20 +172,16 @@ void Server::disconnectClient(int pollFDInd) {
             ++itc;
         }
     }
-    // Clean nick mapping if any
-    std::map<int, Client>::iterator it = _clients.find(fd);
+
+    // Clean nick map + client
     if (it != _clients.end()) {
-        if (it->second.hasNick) {
-            std::map<std::string, int>::iterator nit = _nickToFd.find(it->second.nick);
-            if (nit != _nickToFd.end() && nit->second == fd)
-                _nickToFd.erase(nit);
-        }
+        if (it->second.hasNick)
+            _nickToFd.erase(it->second.nick);
         _clients.erase(it);
     }
 
     _inbuf.erase(fd);
-    if (fd >= 0)
-        close(fd);
+    close(fd);
     _pollFDs.erase(_pollFDs.begin() + pollFDInd);
 }
 
