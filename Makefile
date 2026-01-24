@@ -11,7 +11,8 @@ SRCS = main.cpp \
 		ServerBasicCommands.cpp \
 		ServerChannel.cpp \
 		ServerChannelOperator.cpp \
-		ServerDispatcher.cpp
+		ServerDispatcher.cpp \
+		Mode.cpp
 
 OBJS = $(SRCS:.cpp=.o)
 

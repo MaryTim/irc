@@ -1,4 +1,5 @@
 #include "Server.hpp"
+#include "ModeResult.hpp"
 
 Server::Server(int port, const std::string& password)
     :_port(port), 
@@ -28,6 +29,20 @@ int Server::findPollIndexByFd(int fd) const {
             return static_cast<int>(i);
     }
     return -1;
+}
+
+std::string Server::nickOf(int fd) const {
+    std::map<int, Client>::const_iterator it = _clients.find(fd);
+    if (it != _clients.end() && !it->second.nick.empty())
+        return it->second.nick;
+    return "*";
+}
+
+int Server::findFdByNick(const std::string& nick) const {
+    std::map<std::string, int>::const_iterator it = _nickToFd.find(nick);
+    if (it == _nickToFd.end())
+        return -1;
+    return it->second;
 }
 
 void Server::setNonBlocking(int fd) {

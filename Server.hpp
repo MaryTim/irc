@@ -18,6 +18,7 @@
 #include "IRCParser.hpp"
 #include "Client.hpp"
 #include "Channel.hpp"
+#include "ModeResult.hpp"
 
 class Server {
     public:
@@ -61,6 +62,19 @@ class Server {
         void handleMODE(int fd, const ParsedMessage& msg);
         void handleWHO(int fd, const ParsedMessage& msg);
         void handleQUIT(int fd, const ParsedMessage& msg);
+        void handleTOPIC(int fd, const ParsedMessage& msg);
+
+        // work with modes
+        ModeResult applyChannelModeChanges(int fd, Channel& ch, const ParsedMessage& msg);
+        std::string makeModeBroadcastLine(int fd,
+                                      const std::string& chan,
+                                      const std::string& modeStr,
+                                      const std::vector<std::string>& modeParams);
+
+        static void appendModeChar(std::string& out, char& currentOutSign, bool adding, char modeChar);
+        static bool parsePositiveSizeT(const std::string& s, size_t& out);
+
+        int findFdByNick(const std::string& nick) const;
 
         //helpers
         std::string toUpper(std::string s);
@@ -68,6 +82,7 @@ class Server {
         bool isChannelOperator(const Channel& ch, int fd) const;
         void broadcastToChannel(const Channel& ch, const std::string& line, int exceptFd);
         int findPollIndexByFd(int fd) const;
+        std::string nickOf(int fd) const;
 };
 
 #endif
