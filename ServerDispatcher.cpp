@@ -77,6 +77,15 @@ void Server::onMessage(int fd, const ParsedMessage& msg) {
     if (cmd == "MODE") {
         handleMODE(fd, msg); return;
     }
+    if (msg.command == "TOPIC"){ 
+        handleTOPIC(fd, msg); return;
+    }
+    if (cmd == "INVITE") {
+        handleINVITE(fd, msg); return;
+    }
+    if (cmd == "KICK") {
+        handleKICK(fd, msg); return;
+    }
     if (cmd == "WHO") {
         handleWHO(fd, msg); return;
     }

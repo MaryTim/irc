@@ -63,6 +63,9 @@ class Server {
         void handleWHO(int fd, const ParsedMessage& msg);
         void handleQUIT(int fd, const ParsedMessage& msg);
         void handleTOPIC(int fd, const ParsedMessage& msg);
+        void handleINVITE(int fd, const ParsedMessage& msg);
+        void Server:: handleKICK(int fd, const ParsedMessage& msg);
+
 
         // work with modes
         ModeResult applyChannelModeChanges(int fd, Channel& ch, const ParsedMessage& msg);

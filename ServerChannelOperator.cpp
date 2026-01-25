@@ -120,3 +120,159 @@ void Server::handleTOPIC(int fd, const ParsedMessage& msg) {
     std::string line = userPrefix(c) + " TOPIC " + chanName + " :" + ch.topic;
     broadcastToChannel(ch, line, -1);
 }
+
+
+void Server::handleINVITE(int fd, const ParsedMessage& msg)
+{
+    Client& inviter = _clients[fd];
+
+    if (!inviter.registered) {
+        sendLine(fd, ":" + _serverName + " 451 * :You have not registered");
+        return;
+    }
+
+    // INVITE <nick> <#channel>
+    if (msg.params.size() < 2) {
+        sendLine(fd, ":" + _serverName + " 461 " + inviter.nick +
+                     " INVITE :Not enough parameters");
+        return;
+    }
+
+    std::string targetNick = msg.params[0];
+    std::string chanName   = msg.params[1];
+
+    // channel exists?
+    std::map<std::string, Channel>::iterator chit = _channels.find(chanName);
+    if (chit == _channels.end()) {
+        sendLine(fd, ":" + _serverName + " 403 " + inviter.nick + " " +
+                     chanName + " :No such channel");
+        return;
+    }
+
+    Channel& ch = chit->second;
+
+    // inviter is on channel?
+    if (ch.members.count(fd) == 0) {
+        sendLine(fd, ":" + _serverName + " 442 " + inviter.nick + " " +
+                     chanName + " :You're not on that channel");
+        return;
+    }
+
+    // in this project INVITE is operator command => require operator
+    if (ch.operators.count(fd) == 0) {
+        sendLine(fd, ":" + _serverName + " 482 " + inviter.nick + " " +
+                     chanName + " :You're not channel operator");
+        return;
+    }
+
+    // target exists?
+    int targetFd = findFdByNick(targetNick);
+    if (targetFd == -1) {
+        sendLine(fd, ":" + _serverName + " 401 " + inviter.nick + " " +
+                     targetNick + " :No such nick");
+        return;
+    }
+
+    // target already in channel?
+    if (ch.members.count(targetFd) != 0) {
+        sendLine(fd, ":" + _serverName + " 443 " + inviter.nick + " " +
+                     targetNick + " " + chanName + " :is already on channel");
+        return;
+    }
+
+    // store invite (by fd)
+    ch.invited.insert(targetFd);
+
+    // notify target
+    sendLine(targetFd, userPrefix(inviter) + " INVITE " + targetNick + " " +
+                       chanName);
+
+    // notify inviter (341)
+    sendLine(fd, ":" + _serverName + " 341 " + inviter.nick + " " +
+                 targetNick + " " + chanName);
+}
+
+void Server::handleKICK(int fd, const ParsedMessage& msg)
+{
+    Client& kicker = _clients[fd];
+
+    if (!kicker.registered) {
+        sendLine(fd, ":" + _serverName + " 451 * :You have not registered");
+        return;
+    }
+
+    // KICK <#channel> <nick> [reason]
+    if (msg.params.size() < 2) {
+        sendLine(fd, ":" + _serverName + " 461 " + kicker.nick +
+                     " KICK :Not enough parameters");
+        return;
+    }
+
+    std::string chanName   = msg.params[0];
+    std::string targetNick = msg.params[1];
+
+    std::string reason = "Kicked";
+    if (msg.params.size() >= 3)
+        reason = msg.params[2];
+
+    // channel exists?
+    std::map<std::string, Channel>::iterator chit = _channels.find(chanName);
+    if (chit == _channels.end()) {
+        sendLine(fd, ":" + _serverName + " 403 " + kicker.nick + " " +
+                     chanName + " :No such channel");
+        return;
+    }
+
+    Channel& ch = chit->second;
+
+    // kicker is on channel?
+    if (ch.members.count(fd) == 0) {
+        sendLine(fd, ":" + _serverName + " 442 " + kicker.nick + " " +
+                     chanName + " :You're not on that channel");
+        return;
+    }
+
+    // operator only
+    if (ch.operators.count(fd) == 0) {
+        sendLine(fd, ":" + _serverName + " 482 " + kicker.nick + " " +
+                     chanName + " :You're not channel operator");
+        return;
+    }
+
+    // target exists?
+    int targetFd = findFdByNick(targetNick);
+    if (targetFd == -1) {
+        sendLine(fd, ":" + _serverName + " 401 " + kicker.nick + " " +
+                     targetNick + " :No such nick");
+        return;
+    }
+
+    // target is on channel?
+    if (ch.members.count(targetFd) == 0) {
+        sendLine(fd, ":" + _serverName + " 441 " + kicker.nick + " " +
+                     targetNick + " " + chanName +
+                     " :They aren't on that channel");
+        return;
+    }
+
+    // build KICK message
+    std::string kickLine =
+        userPrefix(kicker) + " KICK " + chanName + " " +
+        targetNick + " :" + reason;
+
+    // broadcast to channel (including target)
+    std::set<int>::iterator it = ch.members.begin();
+    while (it != ch.members.end()) {
+        sendLine(*it, kickLine);
+        ++it;
+    }
+
+    // remove target from channel
+    ch.members.erase(targetFd);
+    ch.operators.erase(targetFd);
+    ch.invited.erase(targetFd);
+
+    // optional: delete empty channel
+    if (ch.members.empty())
+        _channels.erase(chit);
+}
