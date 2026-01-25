@@ -64,7 +64,7 @@ class Server {
         void handleQUIT(int fd, const ParsedMessage& msg);
         void handleTOPIC(int fd, const ParsedMessage& msg);
         void handleINVITE(int fd, const ParsedMessage& msg);
-        void Server:: handleKICK(int fd, const ParsedMessage& msg);
+        void handleKICK(int fd, const ParsedMessage& msg);
 
 
         // work with modes
