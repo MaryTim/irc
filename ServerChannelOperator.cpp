@@ -19,7 +19,7 @@ void Server::handleMODE(int fd, const ParsedMessage& msg) {
     // MODE #channel
     // check we work with channel, it should start with #
     if (target.empty() || target[0] != '#') {
-        sendLine(fd, ":" + _serverName + " 472 " + nickOf(fd) + " :Unknown MODE flag");
+        sendLine(fd, ":" + _serverName + " 403 " + nickOf(fd) + " " + target + " :No such channel");
         return;
     }
 
@@ -43,8 +43,6 @@ void Server::handleMODE(int fd, const ParsedMessage& msg) {
             modes += "i";
         if (ch.topicOpsOnly)
             modes += "t";
-        if (ch.hasKey)
-            modes += "k"; // typically don't reveal key
         if (ch.hasLimit) {
             modes += "l"; 
             std::ostringstream stringStream; // safely convert integer to string

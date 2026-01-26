@@ -2,20 +2,17 @@
 #include "Server.hpp"
 
 std::string Server::makeModeBroadcastLine(int fd,
-                                          const std::string& chan,
-                                          const std::string& modeStr,
-                                          const std::vector<std::string>& modeParams) {
-    // Use full prefix if we can (nick!user@host), otherwise fall back to nick
-    std::string prefix = nickOf(fd);
+                                         const std::string& chan,
+                                         const std::string& modeStr,
+                                         const std::vector<std::string>& modeParams) {
+    std::string prefix = "*";
     std::map<int, Client>::const_iterator it = _clients.find(fd);
     if (it != _clients.end()) {
         prefix = userPrefix(it->second);
     }
-
     std::string line = ":" + prefix + " MODE " + chan + " " + modeStr;
-    for (size_t i = 0; i < modeParams.size(); ++i) {
+    for (size_t i = 0; i < modeParams.size(); i++)
         line += " " + modeParams[i];
-    }
     return line;
 }
 
@@ -24,21 +21,19 @@ bool Server::parsePositiveSizeT(const std::string& s, size_t& out) {
         return false;
 
     // Reject leading '+' or '-' (we only want digits)
-    for (size_t i = 0; i < s.size(); ++i) {
+    for (size_t i = 0; i < s.size(); i++) {
         if (s[i] < '0' || s[i] > '9')
             return false;
     }
-
     // Convert with overflow check
     // size_t max = (size_t)-1;  // max value of size_t
     size_t value = 0;
-    for (size_t i = 0; i < s.size(); ++i) {
+    for (size_t i = 0; i < s.size(); i++) {
         size_t digit = static_cast<size_t>(s[i] - '0');
 
         // overflow check: value*10 + digit <= max
         if (value > ((size_t)-1 - digit) / 10)
             return false;
-
         value = value * 10 + digit;
     }
 
@@ -51,7 +46,7 @@ ModeResult Server::applyChannelModeChanges(int fd, Channel& ch, const ParsedMess
 
     // msg.params: [0]=#chan, [1] = mode string, [2..] = mode params
     if (msg.params.size() < 2) {
-        // Not enough params for a "change" call
+        // Not enough params for a "change" call (MODE #channel)
         std::string nick = nickOf(fd);
         sendLine(fd, ":" + _serverName + " 461 " + nick + " MODE :Not enough parameters");
         return res;
@@ -108,8 +103,6 @@ ModeResult Server::applyChannelModeChanges(int fd, Channel& ch, const ParsedMess
 
                 if (changed) {
                     appendModeChar(res.appliedModes, currentOutSign, true, 'k');
-                    // do we need to broadcast the key? or I hide it?
-                    res.modeParams.push_back(newKey);
                     res.anyChange = true;
                 }
             // -k
@@ -190,7 +183,7 @@ ModeResult Server::applyChannelModeChanges(int fd, Channel& ch, const ParsedMess
             */
                 changed = ch.operators.insert(targetFd).second;
             else
-                changed = (ch.operators.erase(targetFd) > 0); // returns number of el-s removed (0 or 1)
+                changed = (ch.operators.erase(targetFd) > 0); // returns number of el-s removed
 
             if (changed) {
                 appendModeChar(res.appliedModes, currentOutSign, adding, 'o'); 
