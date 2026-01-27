@@ -37,6 +37,8 @@ int main(int argc, char** argv) {
     }
 
     Server server(port, password);
+    if (!server.init())
+        return 1;
     server.run();
     return 0;
 }

@@ -24,6 +24,7 @@ class Server {
     public:
         Server(int port, const std::string& password);
         ~Server();
+        bool init();
         void run();
 
     private:
@@ -36,15 +37,17 @@ class Server {
         std::string _serverName;
         std::vector<pollfd> _pollFDs; // poll list (index 0 = listen fd, index 1..N = clients)
         std::map<int, Client> _clients;
+        std::map<int, std::string> _outbuf;
         std::map<int, std::string> _inbuf; // _inbuf is a dict where key<fd where we take message> <string message>;
         std::map<std::string, int> _nickToFd; // nick -> fd (for uniqueness checks)
         std::map<std::string, Channel> _channels;
 
-        void setupListeningSocket();
-        void setNonBlocking(int fd);
+        bool setupListeningSocket();
+        bool setNonBlocking(int fd);
         void acceptNewClients();
 
         void handleClientRead(int pollFdInd);
+        void flushClientWrite(int pollIndex);
         void disconnectClient(int pollFDInd);
         void disconnectClientByFd(int fd);
         void sendLine(int fd, const std::string& line);

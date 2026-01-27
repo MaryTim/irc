@@ -185,7 +185,7 @@ void Server::handleINVITE(int fd, const ParsedMessage& msg)
     sendLine(targetFd, ":" +userPrefix(inviter) + " INVITE " + targetNick + " " + chanName);
 
     // notify inviter (341)
-    sendLine(fd, ":" + _serverName + " 341 " + inviter.nick + " INVITES" + targetNick + " " + chanName);
+    sendLine(fd, ":" + _serverName + " 341 " + inviter.nick + " " + targetNick + " " + chanName);
 }
 
 void Server::handleKICK(int fd, const ParsedMessage& msg)

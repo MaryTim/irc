@@ -16,8 +16,15 @@ std::string Server::userPrefix(const Client& c) {
 }
 
 void Server::sendLine(int fd, const std::string& line) {
-    std::string out = line + "\r\n";
-    ::send(fd, out.c_str(), out.size(), 0); //.c_str() points to the string's internal buffer
+    std::string out = line;
+    // ensure CRLF exactly once
+    if (out.size() < 2 || out.substr(out.size() - 2) != "\r\n")
+        out += "\r\n";
+    _outbuf[fd] += out;
+    // ask poll() to notify when this fd becomes writable
+    int idx = findPollIndexByFd(fd);
+    if (idx != -1)
+        _pollFDs[idx].events |= POLLOUT;
 }
 
 void Server::disconnectClientByFd(int fd) {

@@ -10,6 +10,7 @@ struct Client {
     bool hasNick;
     bool hasUser;
     bool registered;
+    bool shouldClose;
 
     std::string nick;
     std::string user;

@@ -15,8 +15,13 @@ Server::Server(int port, const std::string& password)
     :_port(port), 
     _listenFd(-1),
     _password(password), 
-    _serverName("ircserv") {
-    setupListeningSocket();
+    _serverName("ircserv") { }
+
+bool Server::init() {
+    // SIGPIPE normally kills the process (server tries to send smth to a client that has already gone)
+    // SIG_IGN disables that
+    signal(SIGPIPE, SIG_IGN);
+    return setupListeningSocket();
 }
 
 Server::~Server() {
@@ -55,56 +60,58 @@ int Server::findFdByNick(const std::string& nick) const {
     return it->second;
 }
 
-void Server::setNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags == -1) {
-        std::cerr << "fcntl(F_GETFL) failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
-    }
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+bool Server::setNonBlocking(int fd) {
+    if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
         std::cerr << "fcntl(F_SETFL, O_NONBLOCK) failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
+        return false;
     }
+    return true;
 }
 
-void Server::setupListeningSocket() {
-    // create endpoint
-    _listenFd = socket(AF_INET, SOCK_STREAM, 0); //IPv4, TCP, default protocol
+bool Server::setupListeningSocket() {
+    _listenFd = socket(AF_INET, SOCK_STREAM, 0); //IPV4, TCP, default
     if (_listenFd < 0) {
         std::cerr << "socket() failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
-    // configure reuse
+    // set non-blocking ASAP (evaluation-safe)
+    if (!setNonBlocking(_listenFd)) {
+        close(_listenFd);
+        _listenFd = -1;
+        return false;
+    }
+
     int yes = 1;
     if (setsockopt(_listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
         std::cerr << "setsockopt(SO_REUSEADDR) failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
+        close(_listenFd);
+        _listenFd = -1;
+        return false;
     }
 
-    sockaddr_in addr; // IPv4 address + port
+    sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY); //Listen on all network interfaces.
-    addr.sin_port = htons(static_cast<unsigned short>(_port)); //host to network short
+    addr.sin_family = AF_INET; //IPv4
+    addr.sin_addr.s_addr = htonl(INADDR_ANY); // to connect from another machine
+    addr.sin_port = htons(static_cast<unsigned short>(_port)); // which port to listen
 
-    // assign IP + port
-    // the OS reserves that port for your program
-    // clients connecting to that port will reach your server
-    if (bind(_listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+    if (bind(_listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) { //attach this socket to this IP address and this port number
         std::cerr << "bind() failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
+        close(_listenFd);
+        _listenFd = -1;
+        return false;
     }
 
-    // enable incoming connection
-    if (listen(_listenFd, SOMAXCONN) < 0) {
+    if (listen(_listenFd, SOMAXCONN) < 0) { // socket accepts incoming connection attempts
         std::cerr << "listen() failed: " << std::strerror(errno) << "\n";
-        std::exit(EXIT_FAILURE);
+        close(_listenFd);
+        _listenFd = -1;
+        return false;
     }
-
-    setNonBlocking(_listenFd);
 
     std::cout << "Listening on port " << _port << " (fd=" << _listenFd << ")\n";
+    return true;
 }
 
 void Server::acceptNewClients() {
@@ -122,13 +129,16 @@ void Server::acceptNewClients() {
             break;
         }
 
-        setNonBlocking(clientFd);
+        if (!setNonBlocking(clientFd)) {
+            close(clientFd);
+            continue; // keep server running
+        }
         std::cout << "connected fd=" << clientFd << "\n";
 
         //add client fd to poll list
         pollfd clientsPollFd;
         clientsPollFd.fd = clientFd;
-        clientsPollFd.events = POLLIN;
+        clientsPollFd.events = POLLIN | POLLOUT;
         clientsPollFd.revents = 0;
 
         this->_pollFDs.push_back(clientsPollFd);
@@ -208,8 +218,41 @@ void Server::disconnectClient(int pollFDInd) {
     }
 
     _inbuf.erase(fd);
+    _outbuf.erase(fd);
     close(fd);
     _pollFDs.erase(_pollFDs.begin() + pollFDInd);
+}
+
+void Server::flushClientWrite(int pollIndex) {
+    int fd = _pollFDs[pollIndex].fd;
+
+    std::map<int, std::string>::iterator it = _outbuf.find(fd);
+    if (it == _outbuf.end() || it->second.empty()) {
+        _pollFDs[pollIndex].events &= ~POLLOUT;
+        return;
+    }
+
+    std::string &buf = it->second;
+
+    while (!buf.empty()) {
+        ssize_t n = ::send(fd, buf.c_str(), buf.size(), 0);
+        if (n > 0) {
+            buf.erase(0, static_cast<size_t>(n)); // handle partial send
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // not writable right now -> wait for next POLLOUT
+            break;
+        }
+        // other error -> disconnect
+        disconnectClient(pollIndex);
+        return;
+    }
+
+    if (buf.empty()) {
+        _outbuf.erase(it);
+        _pollFDs[pollIndex].events &= ~POLLOUT;
+    }
 }
 
 void Server::run() {
@@ -222,7 +265,6 @@ void Server::run() {
     _pollFDs.push_back(listeningPollFd);
 
     while (!g_stop) {
-        // every sec loop check g_stop
         int ret = poll(&_pollFDs[0], _pollFDs.size(), 1000);
         if (ret < 0) {
             if (errno == EINTR)
@@ -231,11 +273,15 @@ void Server::run() {
             break;
         }
         if (ret == 0)
-            continue; // timeout, re-check g_stop
+            continue;
+
+        // Accept new clients
         if (_pollFDs[0].revents & POLLIN) {
             acceptNewClients();
             _pollFDs[0].revents = 0;
             --ret;
+        } else {
+            _pollFDs[0].revents = 0;
         }
 
         size_t i = 1;
@@ -254,7 +300,7 @@ void Server::run() {
 
             bool hasHangOrErr = (re & (POLLHUP | POLLERR | POLLNVAL)) != 0;
 
-            // If readable, read first (even if HUP also set)
+            // 1) Read first
             if (re & POLLIN) {
                 handleClientRead(static_cast<int>(i));
 
@@ -263,25 +309,27 @@ void Server::run() {
                     // current index now refers to the next element; do NOT ++i
                     continue;
                 }
-
-                // still connected. If it also had HUP/ERR, disconnect now.
-                if (hasHangOrErr) {
-                    disconnectClient(static_cast<int>(i));
-                    // disconnectClient erases i, so do NOT ++i
-                    continue;
-                }
-
-                ++i;
-                continue;
             }
 
-            // Not readable; if hang/error => disconnect
+            // 2) Then write pending output (only if poll said writable)
+            if (re & POLLOUT) {
+                flushClientWrite(static_cast<int>(i));
+
+                // flushClientWrite may have disconnected and erased index i
+                if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
+                    // current index now refers to the next element; do NOT ++i
+                    continue;
+                }
+            }
+
+            // 3) If it had hang/error, disconnect (after attempting read/write)
             if (hasHangOrErr) {
                 disconnectClient(static_cast<int>(i));
                 // erased -> don't ++i
                 continue;
             }
-            i++;
+
+            ++i;
         }
     }
 }

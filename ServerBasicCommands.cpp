@@ -83,7 +83,7 @@ void Server::handlePASS(int fd, const ParsedMessage& msg) {
 
     if (msg.params[0] != _password) {
         sendLine(fd, ":" + _serverName + " 464 * :Password incorrect");
-        disconnectClientByFd(fd);
+        c.shouldClose = true;
         return;
     }
 
