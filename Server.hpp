@@ -4,7 +4,7 @@
 #include <iostream>
 #include <cerrno>
 #include <cstring>
-
+#include <cstdlib>
 #include <unistd.h> 
 #include <fcntl.h> 
 #include <poll.h>
@@ -48,7 +48,7 @@ class Server {
         void disconnectClient(int pollFDInd);
         void disconnectClientByFd(int fd);
         void sendLine(int fd, const std::string& line);
-        void onMessage(int fd, const ParsedMessage& msg);
+        void onMessage(int pollInd, int fd, const ParsedMessage& msg);
         void tryRegister(int fd);
 
         // Handlers
@@ -61,7 +61,7 @@ class Server {
         void handlePRIVMSG(int fd, const ParsedMessage& msg);
         void handleMODE(int fd, const ParsedMessage& msg);
         void handleWHO(int fd, const ParsedMessage& msg);
-        void handleQUIT(int fd, const ParsedMessage& msg);
+        void handleQUIT(int pollInd);
         void handleTOPIC(int fd, const ParsedMessage& msg);
         void handleINVITE(int fd, const ParsedMessage& msg);
         void handleKICK(int fd, const ParsedMessage& msg);

@@ -12,7 +12,7 @@ std::string Server::toUpper(std::string s) {
 // It’s mandated by the IRC protocol
 std::string Server::userPrefix(const Client& c) {
     std::string u = c.user.empty() ? "user" : c.user;
-    return ":" + c.nick + "!" + u + "@localhost";
+    return c.nick + "!" + u + "@localhost";
 }
 
 void Server::sendLine(int fd, const std::string& line) {
@@ -43,7 +43,7 @@ void Server::broadcastToChannel(const Channel& ch, const std::string& line, int 
 
 // DISPATCH MESSAGES
 
-void Server::onMessage(int fd, const ParsedMessage& msg) {
+void Server::onMessage(int pollInd, int fd, const ParsedMessage& msg) {
     std::string cmd = toUpper(msg.command);
     if (cmd == "PING") { 
         handlePING(fd, msg); return;
@@ -61,10 +61,10 @@ void Server::onMessage(int fd, const ParsedMessage& msg) {
         handleUSER(fd, msg); return;
     }
     if (cmd == "QUIT") {
-        handleQUIT(fd, msg); return;
+        handleQUIT(pollInd); return;
     }
 
-    if ((cmd == "JOIN" || cmd == "PRIVMSG" || cmd == "MODE" || cmd == "WHO") && !_clients[fd].registered) {
+    if ((cmd == "JOIN" || cmd == "PRIVMSG" || cmd == "MODE" || cmd == "WHO" ) && !_clients[fd].registered) {
         sendLine(fd, ":" + _serverName + " 451 * :You have not registered"); return;
     }
 
@@ -77,7 +77,7 @@ void Server::onMessage(int fd, const ParsedMessage& msg) {
     if (cmd == "MODE") {
         handleMODE(fd, msg); return;
     }
-    if (msg.command == "TOPIC"){ 
+    if (msg.command == "TOPIC") { 
         handleTOPIC(fd, msg); return;
     }
     if (cmd == "INVITE") {

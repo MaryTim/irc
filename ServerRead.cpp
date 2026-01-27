@@ -19,20 +19,27 @@ namespace {
 
 void Server::handleClientRead(int indOfPoll) {
     const int fd = _pollFDs[indOfPoll].fd;
-    std::string& clientBuf = _inbuf[fd];
+
+    // Get/ensure buffer entry (better than keeping a reference forever)
+    std::map<int, std::string>::iterator bit = _inbuf.find(fd);
+    if (bit == _inbuf.end())
+        bit = _inbuf.insert(std::make_pair(fd, std::string())).first;
 
     bool peerClosed = false;
 
-    // Read until EAGAIN/EWOULDBLOCK (non-blocking socket)
     char tmp[512];
     while (true) {
         ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
 
         if (n > 0) {
-            clientBuf.append(tmp, n);
+            // Re-find each time in case fd was disconnected elsewhere (paranoia-safe)
+            bit = _inbuf.find(fd);
+            if (bit == _inbuf.end())
+                return; // disconnected
 
-            // Protect against a client sending an overlong line without newline
-            if (unfinishedLineLen(clientBuf) > 510) {
+            bit->second.append(tmp, n);
+
+            if (unfinishedLineLen(bit->second) > 510) {
                 std::cout << "Protocol violation: overlong line fd=" << fd << "\n";
                 disconnectClient(indOfPoll);
                 return;
@@ -41,34 +48,33 @@ void Server::handleClientRead(int indOfPoll) {
         }
 
         if (n == 0) {
-            // Peer closed the connection. We still want to process any complete lines
-            // already received in clientBuf before disconnecting.
             peerClosed = true;
             break;
         }
 
-        // n < 0
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // Socket drained for now, parse whatever full lines we have.
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
             break;
-        }
 
         std::cerr << "recv() failed fd=" << fd << ": " << std::strerror(errno) << "\n";
         disconnectClient(indOfPoll);
         return;
     }
 
-    // Parse full lines.
-    // Accept both "\r\n" and "\n" (nc variants may send either; -C sends CRLF).
+    // Parse full lines
     while (true) {
-        size_t nl = clientBuf.find('\n');
+        bit = _inbuf.find(fd);
+        if (bit == _inbuf.end())
+            return; // disconnected during command handling
+
+        std::string& buf = bit->second;
+
+        size_t nl = buf.find('\n');
         if (nl == std::string::npos)
             break;
 
-        std::string line = clientBuf.substr(0, nl);
-        clientBuf.erase(0, nl + 1);
+        std::string line = buf.substr(0, nl);
+        buf.erase(0, nl + 1);
 
-        // Strip optional '\r' (for CRLF)
         if (!line.empty() && line[line.size() - 1] == '\r')
             line.erase(line.size() - 1);
 
@@ -81,10 +87,13 @@ void Server::handleClientRead(int indOfPoll) {
         if (msg.command.empty())
             continue;
 
-        onMessage(fd, msg);
+        onMessage(indOfPoll, fd, msg);
+
+        // If QUIT (or any handler) disconnected the client, stop immediately
+        if (_clients.find(fd) == _clients.end())
+            return;
     }
 
-    // After processing buffered commands, disconnect if the peer closed.
     if (peerClosed) {
         std::cout << "Client disconnected fd=" << fd << "\n";
         disconnectClient(indOfPoll);

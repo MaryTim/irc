@@ -1,5 +1,15 @@
 #include "Server.hpp"
 #include "ModeResult.hpp"
+#include <csignal>
+#include <cerrno>
+
+// global flag. volatile - "this value can change unexpectedly”
+// when we receive SIGINT, we flip a flag, main loop checks it later
+static volatile sig_atomic_t g_stop = 0;
+
+static void onSigInt(int) {
+    g_stop = 1;
+}
 
 Server::Server(int port, const std::string& password)
     :_port(port), 
@@ -140,7 +150,7 @@ void Server::disconnectClient(int pollFDInd) {
     // Broadcast QUIT if user is known
     std::map<int, Client>::iterator it = _clients.find(fd);
     if (it != _clients.end() && it->second.hasNick) {
-        std::string quitLine = userPrefix(it->second) + " QUIT : Client Quit";
+        std::string quitLine = ":" + userPrefix(it->second) + " QUIT :Client Quit";
 
         for (std::map<std::string, Channel>::iterator itc = _channels.begin();
              itc != _channels.end(); ++itc) {
@@ -167,17 +177,19 @@ void Server::disconnectClient(int pollFDInd) {
         ch.invited.erase(fd);
 
         // If channel still has members but no operators, promote one.
-    if (!ch.members.empty() && ch.operators.empty()) {
-        int newOpFd = *ch.members.begin(); // smallest fd
-        ch.operators.insert(newOpFd);
+        if (!ch.members.empty() && ch.operators.empty()) {
+            int newOpFd = *ch.members.begin();
 
-        // Optional (nice for clients): broadcast MODE +o nick
-        Client& newOp = _clients[newOpFd];
-        std::string modeLine = ":" + _serverName + " MODE " + ch.name + " +o " + newOp.nick;
-        for (std::set<int>::iterator mit = ch.members.begin(); mit != ch.members.end(); mit++) {
-            sendLine(*mit, modeLine);
+            ch.operators.insert(newOpFd);
+
+            // Optional: broadcast MODE +o nick from server
+            std::map<int, Client>::iterator nit = _clients.find(newOpFd);
+            if (nit != _clients.end()) {
+                std::string modeLine = ":" + _serverName + " MODE " + ch.name + " +o " + nit->second.nick;
+                for (std::set<int>::iterator mit = ch.members.begin(); mit != ch.members.end(); ++mit)
+                    sendLine(*mit, modeLine);
+            }
         }
-    }
 
         if (ch.members.empty()) {
             std::map<std::string, Channel>::iterator dead = itc;
@@ -201,25 +213,29 @@ void Server::disconnectClient(int pollFDInd) {
 }
 
 void Server::run() {
+    std::signal(SIGINT, onSigInt);
+
     pollfd listeningPollFd;
     listeningPollFd.fd = _listenFd;
     listeningPollFd.events = POLLIN;
     listeningPollFd.revents = 0;
     _pollFDs.push_back(listeningPollFd);
 
-    while (true) {
-        int ret = poll(&_pollFDs[0], _pollFDs.size(), -1);
+    while (!g_stop) {
+        // every sec loop check g_stop
+        int ret = poll(&_pollFDs[0], _pollFDs.size(), 1000);
         if (ret < 0) {
             if (errno == EINTR)
                 continue;
             std::cerr << "poll() failed: " << std::strerror(errno) << "\n";
             break;
         }
-
+        if (ret == 0)
+            continue; // timeout, re-check g_stop
         if (_pollFDs[0].revents & POLLIN) {
             acceptNewClients();
             _pollFDs[0].revents = 0;
-            ret -= 1;
+            --ret;
         }
 
         size_t i = 1;
@@ -230,44 +246,42 @@ void Server::run() {
                 continue;
             }
 
-            // Clear revents now (poll() will repopulate next iteration)
+            int fd = _pollFDs[i].fd;
+
+            // clear now
             _pollFDs[i].revents = 0;
             --ret;
 
-            int fd = _pollFDs[i].fd;
             bool hasHangOrErr = (re & (POLLHUP | POLLERR | POLLNVAL)) != 0;
 
-            // IMPORTANT FIX:
-            // If POLLIN is present, read first even if POLLHUP is also present.
+            // If readable, read first (even if HUP also set)
             if (re & POLLIN) {
-                handleClientRead(i);
+                handleClientRead(static_cast<int>(i));
 
-                // handleClientRead may have disconnected this client and erased _pollFDs[i]
-                if (hasHangOrErr) {
-                    if (i < _pollFDs.size() && _pollFDs[i].fd == fd) {
-                        disconnectClient(static_cast<int>(i));
-                    }
-                    // if it got erased, current index now points to next element, so don't ++i
+                // handleClientRead may have disconnected and erased index i
+                if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
+                    // current index now refers to the next element; do NOT ++i
                     continue;
                 }
 
-                // if still here and no hang/error requested, just move on
+                // still connected. If it also had HUP/ERR, disconnect now.
+                if (hasHangOrErr) {
+                    disconnectClient(static_cast<int>(i));
+                    // disconnectClient erases i, so do NOT ++i
+                    continue;
+                }
+
                 ++i;
                 continue;
             }
 
-            // No POLLIN, but hangup/error => disconnect
+            // Not readable; if hang/error => disconnect
             if (hasHangOrErr) {
                 disconnectClient(static_cast<int>(i));
+                // erased -> don't ++i
                 continue;
             }
-
-            // Optional: POLLOUT handling later
-            if (re & POLLOUT) {
-                // TODO send()
-            }
-
-            ++i;
+            i++;
         }
     }
 }

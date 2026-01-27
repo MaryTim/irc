@@ -91,10 +91,8 @@ void Server::handlePASS(int fd, const ParsedMessage& msg) {
     tryRegister(fd);
 }
 
-void Server::handleQUIT(int fd, const ParsedMessage& msg) {
-    int pollInd = findPollIndexByFd(fd);
-    if (pollInd != -1)
-        disconnectClient(pollInd);
+void Server::handleQUIT(int pollInd) {
+    disconnectClient(pollInd);
 }
 
 void Server::tryRegister(int fd) {

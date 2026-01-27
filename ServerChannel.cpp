@@ -64,7 +64,7 @@ void Server::handleJOIN(int fd, const ParsedMessage& msg) {
     if (isNew)
         ch.operators.insert(fd);
 
-    std::string joinLine = userPrefix(c) + " JOIN " + chanName;
+    std::string joinLine = ":" + userPrefix(c) + " JOIN " + chanName;
     sendLine(fd, joinLine);
 
     // Broadcast join to others
@@ -146,7 +146,7 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
             return;
         }
 
-        std::string line = userPrefix(c) + " PRIVMSG " + target + " :" + text;
+        std::string line = ":" + userPrefix(c) + " PRIVMSG " + target + " :" + text;
 
         for (std::set<int>::iterator it = ch.members.begin(); it != ch.members.end(); it++) {
             int toFd = *it;
@@ -165,7 +165,7 @@ void Server::handlePRIVMSG(int fd, const ParsedMessage& msg) {
     }
 
     int toFd = it->second;
-    sendLine(toFd, userPrefix(c) + " PRIVMSG " + target + " :" + text);
+    sendLine(toFd, ":" + userPrefix(c) + " PRIVMSG " + target + " :" + text);
 }
 
 void Server::handleWHO(int fd, const ParsedMessage& msg) {

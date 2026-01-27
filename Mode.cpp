@@ -5,6 +5,8 @@ std::string Server::makeModeBroadcastLine(int fd,
                                          const std::string& chan,
                                          const std::string& modeStr,
                                          const std::vector<std::string>& modeParams) {
+    if (modeStr.empty())
+        return "";
     std::string prefix = "*";
     std::map<int, Client>::const_iterator it = _clients.find(fd);
     if (it != _clients.end()) {
@@ -57,7 +59,6 @@ ModeResult Server::applyChannelModeChanges(int fd, Channel& ch, const ParsedMess
 
     bool adding = true; // current sign (+ or -)
     size_t argi = 2; // index of next extra parameter in msg.params (e.g "i")
-    //char currentOutSign = '\0';
 
     for (size_t i = 0; i < modeStr.size(); i++) {
         char m = modeStr[i];
@@ -129,7 +130,7 @@ ModeResult Server::applyChannelModeChanges(int fd, Channel& ch, const ParsedMess
                 size_t lim = 0;
                 if (!parsePositiveSizeT(limStr, lim)) {
                     std::string nick = nickOf(fd);
-                    sendLine(fd, ":" + _serverName + " 461 " + nick + " MODE :Not enough parameters");
+                    sendLine(fd, ":" + _serverName + " 461 " + nick + " MODE :Invalid limit");
                     continue;
                 }
 
