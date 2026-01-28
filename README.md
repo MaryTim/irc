@@ -94,5 +94,3 @@ AI tools were used as a supportive learning aid during the project. They were ma
 - clarifying protocol behavior and RFC terminology
 - reviewing edge cases and error handling scenarios
 - improving documentation and explanations
-
-All code was written, reviewed, and fully understood by the author. Any AI-generated suggestions were manually verified, tested, and adapted to fit the project constraints.
