@@ -182,7 +182,7 @@ void Server::handleINVITE(int fd, const ParsedMessage& msg)
     ch.invited.insert(targetFd);
 
     // notify target
-    sendLine(targetFd, ":" +userPrefix(inviter) + " INVITE " + targetNick + " " + chanName);
+    sendLine(targetFd, ":" + userPrefix(inviter) + " INVITE " + targetNick + " " + chanName);
 
     // notify inviter (341)
     sendLine(fd, ":" + _serverName + " 341 " + inviter.nick + " " + targetNick + " " + chanName);
@@ -262,7 +262,10 @@ void Server::handleKICK(int fd, const ParsedMessage& msg)
     ch.operators.erase(targetFd);
     ch.invited.erase(targetFd);
 
-    // optional: delete empty channel
-    if (ch.members.empty())
+    if (ch.members.empty()) {
         _channels.erase(chit);
+        return;
+    }
+
+    ensureChannelHasOperator(ch);
 }

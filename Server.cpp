@@ -167,6 +167,29 @@ void Server::acceptNewClients() {
     }
 }
 
+void Server::ensureChannelHasOperator(Channel& ch)
+{
+    if (ch.members.empty())
+        return;
+
+    if (!ch.operators.empty())
+        return;
+
+    // Pick a member
+    int newOpFd = *ch.members.begin();
+    ch.operators.insert(newOpFd);
+
+    // Broadcast MODE +o if we can resolve a nick
+    std::map<int, Client>::iterator nit = _clients.find(newOpFd);
+    if (nit == _clients.end() || !nit->second.hasNick)
+        return;
+
+    std::string modeLine = ":" + _serverName + " MODE " + ch.name + " +o " + nit->second.nick;
+
+    for (std::set<int>::iterator mit = ch.members.begin(); mit != ch.members.end(); ++mit)
+        sendLine(*mit, modeLine);
+}
+
 void Server::disconnectClient(int pollFDInd) {
     if (pollFDInd == 0)
         return;
@@ -202,26 +225,12 @@ void Server::disconnectClient(int pollFDInd) {
         ch.operators.erase(fd);
         ch.invited.erase(fd);
 
-        // If channel still has members but no operators, promote one.
-        if (!ch.members.empty() && ch.operators.empty()) {
-            int newOpFd = *ch.members.begin();
-
-            ch.operators.insert(newOpFd);
-
-            // Optional: broadcast MODE +o nick from server
-            std::map<int, Client>::iterator nit = _clients.find(newOpFd);
-            if (nit != _clients.end()) {
-                std::string modeLine = ":" + _serverName + " MODE " + ch.name + " +o " + nit->second.nick;
-                for (std::set<int>::iterator mit = ch.members.begin(); mit != ch.members.end(); ++mit)
-                    sendLine(*mit, modeLine);
-            }
-        }
-
         if (ch.members.empty()) {
             std::map<std::string, Channel>::iterator dead = itc;
             ++itc;
-            _channels.erase(dead);
+        _channels.erase(dead);
         } else {
+            ensureChannelHasOperator(ch);
             ++itc;
         }
     }
@@ -290,7 +299,7 @@ void Server::run() {
     while (!g_stop) {
         int ret = poll(&_pollFDs[0], _pollFDs.size(), 1000); // number of fds with events
         if (ret < 0) {
-            if (errno == EINTR) //interrapted by signal (SIGINT)
+            if (errno == EINTR) // interrupted by signal (SIGINT)
                 continue;
             std::cerr << "poll() failed: " << std::strerror(errno) << "\n";
             break;
@@ -306,6 +315,7 @@ void Server::run() {
         } else {
             _pollFDs[0].revents = 0;
         }
+
         size_t i = 1;
         while (i < _pollFDs.size() && ret > 0) {
             short re = _pollFDs[i].revents;
@@ -313,37 +323,35 @@ void Server::run() {
                 ++i;
                 continue;
             }
+
             int fd = _pollFDs[i].fd;
+
             // clear now
             _pollFDs[i].revents = 0;
             --ret;
 
-            bool hasHangOrErr = (re & (POLLHUP | POLLERR | POLLNVAL)) != 0;
+            // IMPORTANT: handle hangup/error immediately
+            if (re & (POLLHUP | POLLERR | POLLNVAL)) {
+                disconnectClient(static_cast<int>(i));
+                continue;
+            }
 
-            // read first
+            //  Read first
             if (re & POLLIN) {
                 handleClientRead(static_cast<int>(i));
 
-                // handleClientRead may have disconnected and erased index i
                 if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
                     continue;
                 }
             }
 
-            // write pending output (only if poll said writable)
+            // Write pending output (only if poll said writable)
             if (re & POLLOUT) {
                 flushClientWrite(static_cast<int>(i));
 
-                // flushClientWrite may have disconnected and erased index i
                 if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
                     continue;
                 }
-            }
-
-            // if it had hang/error, disconnect (after attempting read/write)
-            if (hasHangOrErr) {
-                disconnectClient(static_cast<int>(i));
-                continue;
             }
 
             ++i;

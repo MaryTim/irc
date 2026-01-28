@@ -41,7 +41,9 @@ void Server::handleClientRead(int indOfPoll) {
 
             if (unfinishedLineLen(bit->second) > 510) {
                 std::cout << "Protocol violation: overlong line fd=" << fd << "\n";
-                disconnectClient(indOfPoll);
+                int idx = findPollIndexByFd(fd);
+                if (idx != -1)
+                    disconnectClient(idx);
                 return;
             }
             continue;
@@ -56,7 +58,9 @@ void Server::handleClientRead(int indOfPoll) {
             break;
 
         std::cerr << "recv() failed fd=" << fd << ": " << std::strerror(errno) << "\n";
-        disconnectClient(indOfPoll);
+        int idx = findPollIndexByFd(fd);
+        if (idx != -1)
+            disconnectClient(idx);
         return;
     }
 
@@ -96,6 +100,8 @@ void Server::handleClientRead(int indOfPoll) {
 
     if (peerClosed) {
         std::cout << "Client disconnected fd=" << fd << "\n";
-        disconnectClient(indOfPoll);
+        int idx = findPollIndexByFd(fd);
+        if (idx != -1)
+            disconnectClient(idx);
     }
 }

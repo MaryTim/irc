@@ -53,6 +53,7 @@ class Server {
         void disconnectClientByFd(int fd);
         void sendLine(int fd, const std::string& line);
         void onMessage(int pollInd, int fd, const ParsedMessage& msg);
+        void ensureChannelHasOperator(Channel& ch);
         void tryRegister(int fd);
 
         // Handlers
