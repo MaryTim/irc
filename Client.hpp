@@ -10,13 +10,13 @@ struct Client {
     bool hasNick;
     bool hasUser;
     bool registered;
-    bool shouldClose;
+    bool closing;
 
     std::string nick;
     std::string user;
     std::string realname;
 
-    Client() : fd(-1), passOk(false), hasNick(false), hasUser(false), registered(false) {}
+    Client() : fd(-1), passOk(false), hasNick(false), hasUser(false), registered(false), closing(false) {}
 };
 
 #endif

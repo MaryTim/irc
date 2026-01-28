@@ -68,6 +68,23 @@ bool Server::setNonBlocking(int fd) {
     return true;
 }
 
+void Server::requestClose(int fd) {
+    std::map<int, Client>::iterator it = _clients.find(fd);
+    if (it != _clients.end())
+        it->second.closing = true;
+
+    // If nothing pending to send, we can disconnect right away.
+    // Otherwise flushClientWrite() will disconnect after buffer drains.
+    std::map<int, std::string>::iterator ob = _outbuf.find(fd);
+    if (ob == _outbuf.end() || ob->second.empty()) {
+        disconnectClientByFd(fd);
+    } else {
+        int idx = findPollIndexByFd(fd);
+        if (idx != -1)
+            _pollFDs[idx].events |= POLLOUT; // make sure we'll flush
+    }
+}
+
 bool Server::setupListeningSocket() {
     _listenFd = socket(AF_INET, SOCK_STREAM, 0); //IPV4, TCP, default
     if (_listenFd < 0) {
@@ -75,7 +92,6 @@ bool Server::setupListeningSocket() {
         return false;
     }
 
-    // set non-blocking ASAP (evaluation-safe)
     if (!setNonBlocking(_listenFd)) {
         close(_listenFd);
         _listenFd = -1;
@@ -83,6 +99,8 @@ bool Server::setupListeningSocket() {
     }
 
     int yes = 1;
+    // apply options
+    // Allow reusing a local address (IP + port) even if it’s still in TIME_WAIT
     if (setsockopt(_listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
         std::cerr << "setsockopt(SO_REUSEADDR) failed: " << std::strerror(errno) << "\n";
         close(_listenFd);
@@ -96,7 +114,8 @@ bool Server::setupListeningSocket() {
     addr.sin_addr.s_addr = htonl(INADDR_ANY); // to connect from another machine
     addr.sin_port = htons(static_cast<unsigned short>(_port)); // which port to listen
 
-    if (bind(_listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) { //attach this socket to this IP address and this port number
+    //attach this socket to this IP address and this port number
+    if (bind(_listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         std::cerr << "bind() failed: " << std::strerror(errno) << "\n";
         close(_listenFd);
         _listenFd = -1;
@@ -122,7 +141,6 @@ void Server::acceptNewClients() {
         int clientFd = accept(_listenFd, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
         if (clientFd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // No more pending connections right now
                 break;
             }
             std::cerr << "accept() failed: " << std::strerror(errno) << "\n";
@@ -140,14 +158,12 @@ void Server::acceptNewClients() {
         clientsPollFd.fd = clientFd;
         clientsPollFd.events = POLLIN | POLLOUT;
         clientsPollFd.revents = 0;
-
         this->_pollFDs.push_back(clientsPollFd);
         // Ensure client state exists immediately
         Client& c = _clients[clientFd];
         c.fd = clientFd;
         // Ensure input buffer entry exists too
         _inbuf[clientFd] = "";
-        std::cout << "server added new pollFd PollFDs.size = " << _pollFDs.size() << "\n";
     }
 }
 
@@ -252,6 +268,13 @@ void Server::flushClientWrite(int pollIndex) {
     if (buf.empty()) {
         _outbuf.erase(it);
         _pollFDs[pollIndex].events &= ~POLLOUT;
+
+        // if client is marked closing, disconnect now (message is flushed)
+        std::map<int, Client>::iterator cit = _clients.find(fd);
+        if (cit != _clients.end() && cit->second.closing) {
+            disconnectClient(pollIndex);
+            return;
+        }
     }
 }
 
@@ -265,9 +288,9 @@ void Server::run() {
     _pollFDs.push_back(listeningPollFd);
 
     while (!g_stop) {
-        int ret = poll(&_pollFDs[0], _pollFDs.size(), 1000);
+        int ret = poll(&_pollFDs[0], _pollFDs.size(), 1000); // number of fds with events
         if (ret < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR) //interrapted by signal (SIGINT)
                 continue;
             std::cerr << "poll() failed: " << std::strerror(errno) << "\n";
             break;
@@ -283,7 +306,6 @@ void Server::run() {
         } else {
             _pollFDs[0].revents = 0;
         }
-
         size_t i = 1;
         while (i < _pollFDs.size() && ret > 0) {
             short re = _pollFDs[i].revents;
@@ -291,41 +313,36 @@ void Server::run() {
                 ++i;
                 continue;
             }
-
             int fd = _pollFDs[i].fd;
-
             // clear now
             _pollFDs[i].revents = 0;
             --ret;
 
             bool hasHangOrErr = (re & (POLLHUP | POLLERR | POLLNVAL)) != 0;
 
-            // 1) Read first
+            // read first
             if (re & POLLIN) {
                 handleClientRead(static_cast<int>(i));
 
                 // handleClientRead may have disconnected and erased index i
                 if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
-                    // current index now refers to the next element; do NOT ++i
                     continue;
                 }
             }
 
-            // 2) Then write pending output (only if poll said writable)
+            // write pending output (only if poll said writable)
             if (re & POLLOUT) {
                 flushClientWrite(static_cast<int>(i));
 
                 // flushClientWrite may have disconnected and erased index i
                 if (i >= _pollFDs.size() || _pollFDs[i].fd != fd) {
-                    // current index now refers to the next element; do NOT ++i
                     continue;
                 }
             }
 
-            // 3) If it had hang/error, disconnect (after attempting read/write)
+            // if it had hang/error, disconnect (after attempting read/write)
             if (hasHangOrErr) {
                 disconnectClient(static_cast<int>(i));
-                // erased -> don't ++i
                 continue;
             }
 

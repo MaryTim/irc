@@ -43,6 +43,7 @@ class Server {
         std::map<std::string, Channel> _channels;
 
         bool setupListeningSocket();
+        void requestClose(int fd);
         bool setNonBlocking(int fd);
         void acceptNewClients();
 
