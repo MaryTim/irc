@@ -85,7 +85,7 @@ void Server::handleClientRead(int indOfPoll) {
         if (line.empty())
             continue;
 
-        std::cout << "RAW <- [" << line << "]\n";
+        //std::cout << "RAW <- [" << line << "]\n";
 
         ParsedMessage msg = parseLine(line);
         if (msg.command.empty())
